@@ -1,6 +1,6 @@
 # OpenCV Lab
 
-Adventures with OpenCV and Clojure.
+Adventures with [OpenCV](http://opencv.org) and Clojure.
 
 ## Usage
 
@@ -15,6 +15,8 @@ If not, see the
  [OpenCV in Clojure tutorial](http://docs.opencv.org/2.4/doc/tutorials/introduction/clojure_dev_intro/clojure_dev_intro.html)
  for details] for details on how to build your own, and make sure to
  put the corresponding version in `project.clj`
+
+
 
 ## License
 

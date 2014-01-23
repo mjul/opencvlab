@@ -1,5 +1,5 @@
 (ns opencvlab.core
-  (:import [org.opencv.core Mat Size CvType MatOfKeyPoint Scalar]
+  (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria]
            [org.opencv.highgui Highgui]
            [org.opencv.imgproc Imgproc]
            [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d]))
@@ -36,7 +36,7 @@
     (do
       (if colour?
         (Imgproc/cvtColor mat out Imgproc/COLOR_BGR2RGB)
-        (.copy mat out))
+        (.copyTo mat out))
       (let [blen (* (.channels mat) width height)
             bytes (byte-array blen)]
         (.get out 0 0 bytes)
@@ -67,9 +67,26 @@
   (def mf (Highgui/imread input-file org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE))
 
   ;;(Highgui/imwrite output-file result)
+
   (let [gray (clone mf)
         keypoints (detect-keypoints gray)
         result (clone gray)]
     (draw-keypoints! gray keypoints result)
     (imshow result))
-)
+
+  
+  (let [kmresult (clone mf)
+        labels (clone keypoints)
+        k 10
+        crit (TermCriteria. (+ TermCriteria/COUNT TermCriteria/EPS) 10 1.0)
+        attempts 4
+        flags Core/KMEANS_RANDOM_CENTERS]
+      )
+
+    ;; (Imgproc/threshold mf dst (double 120) 255 Imgproc/THRESH_BINARY)
+    ;; (Imgproc/adaptiveThreshold mf dst (double 120) Imgproc/ADAPTIVE_THRESH_MEAN_C Imgproc/THRESH_BINARY 5 5)
+
+  (let [blurred (clone mf)]
+    (Imgproc/blur mf blurred (Size. 10 10) (Point. -1 -1) Imgproc/BORDER_DEFAULT)
+    (imshow blurred)
+    )
