@@ -1,46 +1,75 @@
-(ns opencvlab.core)
-
-(import '[org.opencv.core Mat Size CvType MatOfKeyPoint Scalar]
-        '[org.opencv.highgui Highgui]
-        '[org.opencv.imgproc Imgproc]
-        '[org.opencv.features2d FeatureDetector DescriptorExtractor Features2d])
+(ns opencvlab.core
+  (:import [org.opencv.core Mat Size CvType MatOfKeyPoint Scalar]
+           [org.opencv.highgui Highgui]
+           [org.opencv.imgproc Imgproc]
+           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d]))
 
 (clojure.lang.RT/loadLibrary org.opencv.core.Core/NATIVE_LIBRARY_NAME)
 
-(def input-file "resources/images/mf-2011_375x500.jpg")
-(def output-file "resources/images/mf-2011_result.tif")
 
-(def mf (Highgui/imread input-file 0))
-(def mser (FeatureDetector/create FeatureDetector/MSER))
-(def keypoints (MatOfKeyPoint.))
-(.detect mser mf keypoints)
+(defn detect-keypoints [mat]
+  (let [mser (FeatureDetector/create FeatureDetector/MSER)
+        keypoints (MatOfKeyPoint.)]
+    (.detect mser mat keypoints)
+    keypoints))
 
-(def result (.clone mf))
+(defn draw-keypoints! [mat keypoints result]
+  (let [blue (Scalar. 255 0 0)]
+    (Features2d/drawKeypoints mat keypoints result blue 4)))
 
-(def blue (Scalar. 255 0 0))
-(Features2d/drawKeypoints mf keypoints result blue 4)
+(defn clone [mat]
+  (.clone mat))
 
-(Highgui/imwrite output-file result)
+;; ----------------------------------------------------------------
+;; Helper functions to show the results
+;; ----------------------------------------------------------------
 
+;; Converted from Java code at http://answers.opencv.org/question/23066/show-mat-image/
+(defn to-buffered-image [mat]
+  (let [out (Mat.)
+        colour? (< 1 (.channels mat))
+        type (if colour?
+               java.awt.image.BufferedImage/TYPE_3BYTE_BGR
+               java.awt.image.BufferedImage/TYPE_BYTE_GRAY)
+        width (.cols mat)
+        height (.rows mat)]
+    (do
+      (if colour?
+        (Imgproc/cvtColor mat out Imgproc/COLOR_BGR2RGB)
+        (.copy mat out))
+      (let [blen (* (.channels mat) width height)
+            bytes (byte-array blen)]
+        (.get out 0 0 bytes)
+        (let [image (java.awt.image.BufferedImage. width height type)
+              raster (.getRaster image)]
+          (.setDataElements raster 0 0 width height bytes)
+          image)))))
 
-;; ;; Converted from Java code at http://answers.opencv.org/question/23066/show-mat-image/
-;; (defn to-buffered-image [mat]
-;;   (let [out (Mat.)
-;;         colour? (< 1 (.channels mat))
-;;         type (if colour?
-;;                java.awt.image.BufferedImage/TYPE_BYTE_GRAY
-;;                java.awt.image.BufferedImage/TYPE_3BYTE_BGR)]
-;;     (do
-;;       (if colour? (Imgproc/cvtColor mat out Imgproc/COLOR_BGR2RGB))
-;;       (let [blen (* (.channels mat) (.cols mat) (.rows mat))
-;;             bytes (byte-array blen)]
-;;         (.get out 0 0 bytes)
-;;         (let [image (java.awt.image.BufferedImage. (.cols mat) (.rows mat) type)]
-;;           (-> image
-;;               .getRaster
-;;               (.setDataElements 0 0 (.cols mat) (.rows mat) bytes))
-;;           image)))))
+(defn show-frame [image]
+  (doto (javax.swing.JFrame.)
+    (.setTitle "Hello, world")
+    (.add (proxy [javax.swing.JPanel] []
+            (paint [g] (.drawImage g image 0 0 nil))))
+    (.setSize (java.awt.Dimension. (.getWidth image) (.getHeight image)))
+    (.show)))
 
-;; (defn imshow [mat]
-  
-;;   )
+(defn imshow [mat]
+  (show-frame (to-buffered-image mat)))
+
+;; ----------------------------------------------------------------
+;; REPL PLAYGROUND
+;; ----------------------------------------------------------------
+
+(comment
+
+  (def input-file "resources/images/mf-2011_375x500.jpg")
+  (def output-file "resources/images/mf-2011_result.tif")
+  (def mf (Highgui/imread input-file org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE))
+
+  ;;(Highgui/imwrite output-file result)
+  (let [gray (clone mf)
+        keypoints (detect-keypoints gray)
+        result (clone gray)]
+    (draw-keypoints! gray keypoints result)
+    (imshow result))
+)
