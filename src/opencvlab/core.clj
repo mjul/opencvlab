@@ -14,8 +14,9 @@
     keypoints))
 
 (defn draw-keypoints! [mat keypoints result]
-  (let [blue (Scalar. 255 0 0)]
-    (Features2d/drawKeypoints mat keypoints result blue 4)))
+  (let [blue (Scalar. 255 0 0)
+        random (Scalar/all -1)]
+    (Features2d/drawKeypoints mat keypoints result random 4)))
 
 (defn clone [mat]
   (.clone mat))
@@ -85,8 +86,12 @@
 
     ;; (Imgproc/threshold mf dst (double 120) 255 Imgproc/THRESH_BINARY)
     ;; (Imgproc/adaptiveThreshold mf dst (double 120) Imgproc/ADAPTIVE_THRESH_MEAN_C Imgproc/THRESH_BINARY 5 5)
+    ;; (Imgproc/blur mf blurred (Size. 15 15) (Point. -1 -1) Imgproc/BORDER_DEFAULT)
 
   (let [blurred (clone mf)]
-    (Imgproc/blur mf blurred (Size. 10 10) (Point. -1 -1) Imgproc/BORDER_DEFAULT)
-    (imshow blurred)
-    )
+    (Imgproc/blur mf blurred (Size. 15 15) (Point. -1 -1) Imgproc/BORDER_DEFAULT)
+    (let [mask (clone blurred)]
+      (Imgproc/threshold blurred mask (double 80) 255 Imgproc/THRESH_BINARY)
+      (imshow mask)))
+
+)
