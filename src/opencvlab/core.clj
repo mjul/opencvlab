@@ -2,7 +2,8 @@
   (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria]
            [org.opencv.highgui Highgui]
            [org.opencv.imgproc Imgproc]
-           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d]))
+           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint]
+           [org.opencv.flann ]))
 
 (clojure.lang.RT/loadLibrary org.opencv.core.Core/NATIVE_LIBRARY_NAME)
 
@@ -20,6 +21,21 @@
 
 (defn clone [mat]
   (.clone mat))
+
+;; ----------------------------------------------------------------
+
+(defmulti to-map class)
+
+(defmethod to-map Point [p] 
+  {:x (.x p) :y (.y p)})
+
+(defmethod to-map KeyPoint [kp] 
+  {:point (to-map (.pt kp))
+   :size (.size kp)
+   :angle (.angle kp)
+   :response (.response kp)
+   :octave (.octave kp)
+   :class-id (.class_id kp)})
 
 ;; ----------------------------------------------------------------
 ;; Helper functions to show the results
@@ -58,6 +74,60 @@
   (show-frame (to-buffered-image mat)))
 
 ;; ----------------------------------------------------------------
+
+
+(defn dist [[x1 y1] [x2 y2]]
+  (let [dx (- x2 x1)
+        dy (- y2 y1)]
+    (java.lang.Math/sqrt (+ (* dx dx) (* dy dy)))))
+
+(defn to-xy [kp-map]
+  ((juxt :x :y) (:point kp-map)))
+
+
+;; Naive O(n^2) implementation
+(defn kp-dists [keypoints]
+  (let [kps (map to-map (.toArray keypoints))]
+    (for [a kps
+          b kps] 
+      {:a a
+       :b b
+       :dist (dist (to-xy a) (to-xy b))})))
+
+(defn nearby? [kpd]
+  (let [max-radius-factor 1.5
+        min-size (min (:size (:a kpd)) (:size (:b kpd)))
+        max-dist (* max-radius-factor min-size)]
+    (< (:dist kpd) max-dist)))
+
+(defn similar-size? [kpd]
+  (let [ratio (/ (:size (:a kpd)) (:size (:b kpd)))]
+    (< 2/3 ratio 3/2)))
+
+;; Find neighbouring keypoints, a heuristic for letters belonging to the same word
+(defn same-word-pairs [keypoints]
+  (filter (fn [kpd]   
+            (and (< 0 (:dist kpd))
+                 ;;; eliminate duplicates (a,b) (b,a)
+                 (<= (get-in kpd [:a :point :x])
+                     (get-in kpd [:b :point :x]))
+                 (nearby? kpd)
+                 (similar-size? kpd)))
+          (kp-dists keypoints)))
+
+(defn draw-box-for-pair! [img p]
+  (let [a (get-in p [:a :point])
+        b (get-in p [:b :point])
+        r (max (:size (:a p)) (:size (:b p)))
+        x-min (- (min (:x a) (:x b)) r)
+        y-min (- (min (:y a) (:y b) ) r)
+        x-max (+ (max (:x a) (:x b)) r)
+        y-max (+ (max (:y a) (:y b) ) r)
+        col (Scalar/all -1)]
+    (Core/rectangle img (Point. x-min y-min) (Point. x-max y-max) col)))
+
+
+;; ----------------------------------------------------------------
 ;; REPL PLAYGROUND
 ;; ----------------------------------------------------------------
 
@@ -69,13 +139,21 @@
 
   ;;(Highgui/imwrite output-file result)
 
+
   (let [gray (clone mf)
         keypoints (detect-keypoints gray)
-        result (clone gray)]
+        result (clone gray)
+        dists (kp-dists keypoints)]
     (draw-keypoints! gray keypoints result)
+    (doall 
+     (for [p (take 2500 (same-word-pairs keypoints))]
+       (draw-box-for-pair! result p)))
     (imshow result))
+ 
 
   
+
+
   (let [kmresult (clone mf)
         labels (clone keypoints)
         k 10
