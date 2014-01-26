@@ -95,38 +95,86 @@
        :dist (dist (to-xy a) (to-xy b))})))
 
 (defn nearby? [kpd]
-  (let [max-radius-factor 1.5
+  (let [max-radius-factor 5/3
         min-size (min (:size (:a kpd)) (:size (:b kpd)))
         max-dist (* max-radius-factor min-size)]
     (< (:dist kpd) max-dist)))
 
 (defn similar-size? [kpd]
   (let [ratio (/ (:size (:a kpd)) (:size (:b kpd)))]
-    (< 2/3 ratio 3/2)))
+    (< 3/4 ratio 4/3)))
 
-;; Find neighbouring keypoints, a heuristic for letters belonging to the same word
-(defn same-word-pairs [keypoints]
-  (filter (fn [kpd]   
-            (and (< 0 (:dist kpd))
-                 ;;; eliminate duplicates (a,b) (b,a)
-                 (<= (get-in kpd [:a :point :x])
-                     (get-in kpd [:b :point :x]))
-                 (nearby? kpd)
-                 (similar-size? kpd)))
-          (kp-dists keypoints)))
+(defn same-word-pairs 
+  "Find neighbouring keypoints, a heuristic for letters belonging to the same word. Returns keypoint-dist maps."
+  [keypoints]
+  (let [kpds (kp-dists keypoints)]
+    (filter (fn [kpd] 
+              (and (< 0 (:dist kpd))
+                   ;; eliminate duplicates (a,b) (b,a)
+                   (<= (get-in kpd [:a :point :x])
+                      (get-in kpd [:b :point :x]))
+                   (nearby? kpd)
+                   (similar-size? kpd)))
+            kpds)))
+
+(defn enclosing-box
+  "Given a keypoint-dist structure, return the box enclosing the keypoint."
+  [kpd]
+  (let [point (:point kpd)
+        r (/ (max (:size kpd)) 2)
+        x1 (- (:x point) r)
+        y1 (- (:y point) r)
+        x2 (+ (:x point) r)
+        y2 (+ (:y point) r)]
+    {:x1 x1 :y1 y1, :x2 x2 :y2 y2}))
+
+(defn box-hull 
+  "Get the smallest box that encloses the two boxes a and b."
+  [a b]
+  {:x1 (min (:x1 a) (:x1 b))
+   :y1 (min (:y1 a) (:y1 b))
+   :x2 (max (:x2 a) (:x2 b))
+   :y2 (max (:y2 a) (:y2 b))})
 
 (defn draw-box-for-pair! [img p]
   (let [a (get-in p [:a :point])
         b (get-in p [:b :point])
-        r (max (:size (:a p)) (:size (:b p)))
-        x-min (- (min (:x a) (:x b)) r)
-        y-min (- (min (:y a) (:y b) ) r)
-        x-max (+ (max (:x a) (:x b)) r)
-        y-max (+ (max (:y a) (:y b) ) r)
+        box (bounding-box (enclosing-box (get p :a)) (enclosing-box (get p :b)))
         col (Scalar/all -1)]
-    (Core/rectangle img (Point. x-min y-min) (Point. x-max y-max) col)))
+    (Core/rectangle img (Point. (:x1 box) (:y1 box)) (Point. (:x2 box) (:y2 box)) col)))
+
+(defn edges 
+  "Get a map from each a to the set of each b connected to a."
+  [pairs]
+  (->> 
+   (group-by :a pairs)
+   (map (fn [[k vs]] [k (map :b vs)]))
+   (set)))
+
+(defn draw-hull! 
+  [img hull]
+  (let [col (Scalar/all -1)]
+    (Core/rectangle img (Point. (:x1 hull) (:y1 hull)) (Point. (:x2 hull) (:y2 hull)) col)))
+  
+(defn bigram-clusters [img]
+  (let [gray (clone img)
+        keypoints (detect-keypoints gray)
+        result (clone gray)
+        dists (kp-dists keypoints)]
+    (draw-keypoints! gray keypoints result)
+    (doall 
+     (let [pairs (same-word-pairs keypoints)
+           connected-to (edges pairs)
+           kp-groups (map (fn [[from tos]] (set (conj tos from))) connected-to)
+           enclosing-box-groups (map (fn [grp] (map enclosing-box grp)) kp-groups)
+           hulls (map (fn [grp] (reduce box-hull grp)) enclosing-box-groups)
+           distinct-hulls (set hulls)]
+       (for [x distinct-hulls] 
+         (draw-hull! result x))))
+    (imshow result)))
 
 
+;;
 ;; ----------------------------------------------------------------
 ;; REPL PLAYGROUND
 ;; ----------------------------------------------------------------
@@ -146,7 +194,7 @@
         dists (kp-dists keypoints)]
     (draw-keypoints! gray keypoints result)
     (doall 
-     (for [p (take 2500 (same-word-pairs keypoints))]
+     (for [p (take 99999 (same-word-pairs keypoints))]
        (draw-box-for-pair! result p)))
     (imshow result))
  
