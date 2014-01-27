@@ -2,11 +2,9 @@
   (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria]
            [org.opencv.highgui Highgui]
            [org.opencv.imgproc Imgproc]
-           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint])
-  (:require [clojure.tools trace]))
+           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint]))
 
 (clojure.lang.RT/loadLibrary org.opencv.core.Core/NATIVE_LIBRARY_NAME)
-
 
 (defn detect-keypoints [mat]
   (let [mser (FeatureDetector/create FeatureDetector/MSER)
@@ -21,6 +19,22 @@
 
 (defn clone [mat]
   (.clone mat))
+
+;; ----------------------------------------------------------------
+;; Imgproc
+;; ----------------------------------------------------------------
+
+(defn blur 
+  [img size]
+  (let [blurred (clone img)]
+    (Imgproc/blur img blurred (Size. size size) (Point. -1 -1) Imgproc/BORDER_DEFAULT)
+    blurred))
+
+(defn threshold 
+  [img threshold max]
+  (let [result (clone img)]
+    (Imgproc/threshold img result threshold max Imgproc/THRESH_BINARY)
+    result))
 
 ;; ----------------------------------------------------------------
 
@@ -264,10 +278,11 @@
   ;;(Highgui/imwrite output-file result)
 
 
-  (let [gray (clone mf)
-        keypoints (detect-keypoints gray)
-        result (clone gray)]
-    (draw-keypoints! gray keypoints result)
+  (let [img (clone mf)
+        filtered (-> img clone (blur 5))
+        keypoints (detect-keypoints filtered)
+        result (clone filtered)]
+    (draw-keypoints! filtered keypoints result)
     (imshow result))
  
 
