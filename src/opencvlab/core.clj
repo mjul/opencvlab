@@ -2,8 +2,8 @@
   (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria]
            [org.opencv.highgui Highgui]
            [org.opencv.imgproc Imgproc]
-           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint]
-           [org.opencv.flann ]))
+           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint])
+  (:require [clojure.tools trace]))
 
 (clojure.lang.RT/loadLibrary org.opencv.core.Core/NATIVE_LIBRARY_NAME)
 
@@ -17,7 +17,7 @@
 (defn draw-keypoints! [mat keypoints result]
   (let [blue (Scalar. 255 0 0)
         random (Scalar/all -1)]
-    (Features2d/drawKeypoints mat keypoints result random 4)))
+    (Features2d/drawKeypoints mat keypoints result random Features2d/DRAW_RICH_KEYPOINTS)))
 
 (defn clone [mat]
   (.clone mat))
@@ -84,10 +84,25 @@
 (defn to-xy [kp-map]
   ((juxt :x :y) (:point kp-map)))
 
+(defn is-keypoint? [x] (instance? KeyPoint x))
+
+(defn kp-seq 
+  [kp-mat]
+  {:pre [(instance? MatOfKeyPoint kp-mat)]}
+  (seq (.toArray kp-mat)))
+
+(defn kp-mat [kps]
+  {:pre [(seq? kps) (every? is-keypoint? kps)]}
+  (let [m (MatOfKeyPoint.)
+        a (into-array kps)]
+    (.fromArray m a)
+    m))
 
 ;; Naive O(n^2) implementation
-(defn kp-dists [keypoints]
-  (let [kps (map to-map (.toArray keypoints))]
+(defn kp-dists 
+  [keypoints]
+  {:pre [(seq? keypoints) (every? is-keypoint? keypoints)]}
+  (let [kps (map to-map keypoints)]
     (for [a kps
           b kps] 
       {:a a
@@ -95,24 +110,32 @@
        :dist (dist (to-xy a) (to-xy b))})))
 
 (defn nearby? [kpd]
-  (let [max-radius-factor 5/3
+  (let [max-radius-factor 7/4
         min-size (min (:size (:a kpd)) (:size (:b kpd)))
         max-dist (* max-radius-factor min-size)]
     (< (:dist kpd) max-dist)))
 
 (defn similar-size? [kpd]
   (let [ratio (/ (:size (:a kpd)) (:size (:b kpd)))]
-    (< 3/4 ratio 4/3)))
+    (< 3/5 ratio 5/3)))
+
+(defn non-trivial-size? 
+  [kpd]
+  {:pre [(:size kpd)]}
+  (< 5 (:size kpd)))
 
 (defn same-word-pairs 
   "Find neighbouring keypoints, a heuristic for letters belonging to the same word. Returns keypoint-dist maps."
   [keypoints]
+  {:pre [(seq? keypoints) (every? is-keypoint? keypoints)]}
   (let [kpds (kp-dists keypoints)]
     (filter (fn [kpd] 
               (and (< 0 (:dist kpd))
+                   (non-trivial-size? (:a kpd))
+                   (non-trivial-size? (:b kpd))
                    ;; eliminate duplicates (a,b) (b,a)
                    (<= (get-in kpd [:a :point :x])
-                      (get-in kpd [:b :point :x]))
+                       (get-in kpd [:b :point :x]))       
                    (nearby? kpd)
                    (similar-size? kpd)))
             kpds)))
@@ -139,38 +162,91 @@
 (defn draw-box-for-pair! [img p]
   (let [a (get-in p [:a :point])
         b (get-in p [:b :point])
-        box (bounding-box (enclosing-box (get p :a)) (enclosing-box (get p :b)))
+        box (box-hull (enclosing-box (get p :a)) (enclosing-box (get p :b)))
         col (Scalar/all -1)]
     (Core/rectangle img (Point. (:x1 box) (:y1 box)) (Point. (:x2 box) (:y2 box)) col)))
 
 (defn edges 
   "Get a map from each a to the set of each b connected to a."
   [pairs]
+  {:pre [#(seq? pairs)]
+   :post [(map? %)]}
   (->> 
    (group-by :a pairs)
    (map (fn [[k vs]] [k (map :b vs)]))
-   (set)))
+   (into {})))
 
 (defn draw-hull! 
   [img hull]
   (let [col (Scalar/all -1)]
     (Core/rectangle img (Point. (:x1 hull) (:y1 hull)) (Point. (:x2 hull) (:y2 hull)) col)))
   
-(defn bigram-clusters [img]
+
+(defn overlapping-clusters 
+  "Boxes around keypoints with near overlap."
+  [img]
   (let [gray (clone img)
         keypoints (detect-keypoints gray)
+        kps (kp-seq keypoints)
         result (clone gray)
-        dists (kp-dists keypoints)]
+        pairs (same-word-pairs kps)
+        connected-to (edges pairs)
+        kp-groups (map (fn [[from tos]] (set (conj tos from))) connected-to)
+        enclosing-box-groups (map (fn [grp] (map enclosing-box grp)) kp-groups)
+        hulls (map (fn [grp] (reduce box-hull grp)) enclosing-box-groups)
+        distinct-hulls (set hulls)]
     (draw-keypoints! gray keypoints result)
     (doall 
-     (let [pairs (same-word-pairs keypoints)
-           connected-to (edges pairs)
-           kp-groups (map (fn [[from tos]] (set (conj tos from))) connected-to)
-           enclosing-box-groups (map (fn [grp] (map enclosing-box grp)) kp-groups)
-           hulls (map (fn [grp] (reduce box-hull grp)) enclosing-box-groups)
-           distinct-hulls (set hulls)]
+     (for [x distinct-hulls] 
+       (draw-hull! result x)))
+    (imshow result)))
+
+
+(defn adjacents [connected-to pt]
+  (get connected-to pt))
+
+
+(defn reachable-from 
+  ([conn-to pt]
+     (reachable-from conn-to #{pt} 16))
+  ([conn-to pts max-depth]
+     (if (<= max-depth 0)
+       pts
+       (let [adjs (apply clojure.set/union (map #(set (adjacents conn-to %)) pts))
+             new (clojure.set/difference adjs pts)]
+         (if (seq new)
+           (reachable-from conn-to (clojure.set/union pts new) (dec max-depth))
+           pts)))))
+
+
+(defn reachable-clusters 
+  "Boxes around keypoints reachable through near overlaps."
+  [img]
+  (let [gray (clone img)
+        keypoints (detect-keypoints gray)
+        kps (kp-seq keypoints)
+        result (clone gray)
+        ;; filter to a subset while we experiment
+        subset (filter (fn [kp]
+                         (and (<= (-> kp .pt .x) 600)
+                              (<= 0 (-> kp .pt .y))
+                              (<= 10 (.size kp) 40))) 
+                       kps)
+        pairs (same-word-pairs subset)
+        connected-to (edges pairs)
+        transitive-connections (->> connected-to
+                                    (map (fn [[src adjacents]] [src (reachable-from connected-to src)])))
+        kp-groups (map (fn [[from tos]] (set (conj tos from))) transitive-connections)
+        unique-groups (set kp-groups)
+        major-groups (take 50 (sort-by #(- (count %)) unique-groups))
+        enclosing-box-groups (map (fn [grp] (map enclosing-box grp)) major-groups)
+        hulls (map (fn [grp] (reduce box-hull grp)) enclosing-box-groups)
+        distinct-hulls (set hulls)]
+    (draw-keypoints! gray (kp-mat subset) result)
+    (doall 
+       #_(for [x transitive-connections] (println x))
        (for [x distinct-hulls] 
-         (draw-hull! result x))))
+         (draw-hull! result x)))
     (imshow result)))
 
 
@@ -180,7 +256,7 @@
 ;; ----------------------------------------------------------------
 
 (comment
-
+  
   (def input-file "resources/images/mf-2011_375x500.jpg")
   (def output-file "resources/images/mf-2011_result.tif")
   (def mf (Highgui/imread input-file org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE))
@@ -190,16 +266,10 @@
 
   (let [gray (clone mf)
         keypoints (detect-keypoints gray)
-        result (clone gray)
-        dists (kp-dists keypoints)]
+        result (clone gray)]
     (draw-keypoints! gray keypoints result)
-    (doall 
-     (for [p (take 99999 (same-word-pairs keypoints))]
-       (draw-box-for-pair! result p)))
     (imshow result))
  
-
-  
 
 
   (let [kmresult (clone mf)
