@@ -37,6 +37,16 @@
     result))
 
 ;; ----------------------------------------------------------------
+;; Core 
+;; ----------------------------------------------------------------
+
+(defn rectangle 
+  ([img x1 y1 x2 y2 col]
+     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col))
+  ([img x1 y1 x2 y2 col fill?]
+     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col (if fill? Core/FILLED 1))))
+
+;; ----------------------------------------------------------------
 
 (defmulti to-map class)
 
@@ -76,16 +86,20 @@
           (.setDataElements raster 0 0 width height bytes)
           image)))))
 
-(defn show-frame [image]
+(defn show-frame 
+  [image title]
   (doto (javax.swing.JFrame.)
-    (.setTitle "Hello, world")
+    (.setTitle title)
     (.add (proxy [javax.swing.JPanel] []
             (paint [g] (.drawImage g image 0 0 nil))))
     (.setSize (java.awt.Dimension. (.getWidth image) (.getHeight image)))
     (.show)))
 
-(defn imshow [mat]
-  (show-frame (to-buffered-image mat)))
+(defn imshow 
+  ([mat]
+     (imshow mat "Untitled image"))
+  ([mat title]
+     (show-frame (to-buffered-image mat) title)))
 
 ;; ----------------------------------------------------------------
 
@@ -178,7 +192,7 @@
         b (get-in p [:b :point])
         box (box-hull (enclosing-box (get p :a)) (enclosing-box (get p :b)))
         col (Scalar/all -1)]
-    (Core/rectangle img (Point. (:x1 box) (:y1 box)) (Point. (:x2 box) (:y2 box)) col)))
+    (rectangle img (:x1 box) (:y1 box) (:x2 box) (:y2 box) col)))
 
 (defn edges 
   "Get a map from each a to the set of each b connected to a."
@@ -191,10 +205,16 @@
    (into {})))
 
 (defn draw-hull! 
-  [img hull]
-  (let [col (Scalar/all -1)]
-    (Core/rectangle img (Point. (:x1 hull) (:y1 hull)) (Point. (:x2 hull) (:y2 hull)) col)))
-  
+  ([img hull]
+     (draw-hull! img hull (Scalar/all -1)))
+  ([img hull col fill?]
+     (rectangle img (:x1 hull) (:y1 hull) (:x2 hull) (:y2 hull) col fill?)))
+
+(defn enlarge-hull [h border]
+  {:x1 (- (:x1 h) border)
+   :y1 (- (:y1 h) border)
+   :x2 (+ (:x2 h) border)
+   :y2 (+ (:y2 h) border)})
 
 (defn overlapping-clusters 
   "Boxes around keypoints with near overlap."
@@ -233,6 +253,7 @@
            pts)))))
 
 
+
 (defn reachable-clusters 
   "Boxes around keypoints reachable through near overlaps."
   [img]
@@ -255,13 +276,26 @@
         major-groups (take 50 (sort-by #(- (count %)) unique-groups))
         enclosing-box-groups (map (fn [grp] (map enclosing-box grp)) major-groups)
         hulls (map (fn [grp] (reduce box-hull grp)) enclosing-box-groups)
-        distinct-hulls (set hulls)]
-    (draw-keypoints! gray (kp-mat subset) result)
+        distinct-hulls (set hulls)
+        mask (clone img)]
+    #_(draw-keypoints! img (kp-mat subset) result)
+    (.setTo mask (Scalar/all 0))
     (doall 
-       #_(for [x transitive-connections] (println x))
-       (for [x distinct-hulls] 
-         (draw-hull! result x)))
-    (imshow result)))
+     (for [x distinct-hulls] 
+       (do (draw-hull! mask (enlarge-hull x 5) (Scalar/all 255) true))))
+    #_(imshow result "Keypoints")
+    (.setTo result (Scalar/all 255))
+    (.copyTo (clone img) result mask)
+    (let [text-on-white (threshold (blur result 2) 150 255)]
+      text-on-white)))
+
+(comment 
+  (imshow mf "Input image")
+  (imshow (reachable-clusters mf) "filtered")
+  
+  )
+  
+
 
 
 ;;
@@ -269,31 +303,32 @@
 ;; REPL PLAYGROUND
 ;; ----------------------------------------------------------------
 
+(defn read-image-resource
+  [k]
+  (let [files {:domp "dom-p-2004_375x500.tif",
+               :mf "mf-2011_375x500.jpg"}
+        input (str "resources/images/" (files k))]
+    (Highgui/imread input org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE)))
+
+(defn write-image [k img]
+  (Highgui/imwrite (str "resources/images/" (name k) "_result.tif") img))
+
 (comment
   
-  (def input-file "resources/images/mf-2011_375x500.jpg")
-  (def output-file "resources/images/mf-2011_result.tif")
-  (def mf (Highgui/imread input-file org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE))
+  (def mf (read-image-resource :mf))
+  (def domp (read-image-resource :domp))
 
-  ;;(Highgui/imwrite output-file result)
-
+  (write-image :mf (reachable-clusters mf))
+  (write-image :domp (reachable-clusters domp))
 
   (let [img (clone mf)
-        filtered (-> img clone (blur 5))
+        filtered (-> img clone (blur 2))
         keypoints (detect-keypoints filtered)
         result (clone filtered)]
     (draw-keypoints! filtered keypoints result)
     (imshow result))
  
 
-
-  (let [kmresult (clone mf)
-        labels (clone keypoints)
-        k 10
-        crit (TermCriteria. (+ TermCriteria/COUNT TermCriteria/EPS) 10 1.0)
-        attempts 4
-        flags Core/KMEANS_RANDOM_CENTERS]
-      )
 
     ;; (Imgproc/threshold mf dst (double 120) 255 Imgproc/THRESH_BINARY)
     ;; (Imgproc/adaptiveThreshold mf dst (double 120) Imgproc/ADAPTIVE_THRESH_MEAN_C Imgproc/THRESH_BINARY 5 5)
