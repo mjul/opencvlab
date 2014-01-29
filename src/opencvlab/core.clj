@@ -1,24 +1,64 @@
 (ns opencvlab.core
-  (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria]
+  (:import [org.opencv.core Mat Size Point CvType MatOfKeyPoint Scalar Core TermCriteria MatOfDMatch MatOfByte]
            [org.opencv.highgui Highgui]
            [org.opencv.imgproc Imgproc]
-           [org.opencv.features2d FeatureDetector DescriptorExtractor Features2d KeyPoint]))
+           [org.opencv.features2d FeatureDetector DescriptorExtractor DescriptorMatcher Features2d KeyPoint DMatch]))
 
 (clojure.lang.RT/loadLibrary org.opencv.core.Core/NATIVE_LIBRARY_NAME)
 
-(defn detect-keypoints [mat]
-  (let [mser (FeatureDetector/create FeatureDetector/MSER)
+
+;; ----------------------------------------------------------------
+;; Core 
+;; ----------------------------------------------------------------
+
+(defn clone [mat]
+  (.clone mat))
+
+(defn rectangle 
+  ([img x1 y1 x2 y2 col]
+     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col))
+  ([img x1 y1 x2 y2 col fill?]
+     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col (if fill? Core/FILLED 1))))
+
+;; ----------------------------------------------------------------
+;; Feature detection
+;; ----------------------------------------------------------------
+
+(defn detect-keypoints 
+  [mat algo]
+  (let [fd (FeatureDetector/create algo)
         keypoints (MatOfKeyPoint.)]
-    (.detect mser mat keypoints)
+    (.detect fd mat keypoints)
     keypoints))
+
+(defn detect-keypoints-mser [mat]
+  (detect-keypoints mat FeatureDetector/MSER))
+
+(defn detect-keypoints-surf [mat]
+  (detect-keypoints mat FeatureDetector/SURF))
 
 (defn draw-keypoints! [mat keypoints result]
   (let [blue (Scalar. 255 0 0)
         random (Scalar/all -1)]
     (Features2d/drawKeypoints mat keypoints result random Features2d/DRAW_RICH_KEYPOINTS)))
 
-(defn clone [mat]
-  (.clone mat))
+(defn draw-matches! [img-a kp-a img-b kp-b matches result]
+  (let [blue (Scalar. 255 0 0)
+        random (Scalar/all -1)
+        colour random
+        single-point-colour random]
+    (Features2d/drawMatches img-a kp-a img-b kp-b matches result
+                            colour single-point-colour
+                            (MatOfByte.) 0)))
+
+(defn dmatch-mat 
+  [matches]
+  "Convert a seq of matches in a MatOfDMatch."
+  {:pre [(seq? matches) (every? #(instance? DMatch %) matches)]}
+  (let [m (MatOfDMatch.)
+        a (into-array matches)]
+    (.fromArray m a)
+    m))
 
 ;; ----------------------------------------------------------------
 ;; Imgproc
@@ -35,16 +75,6 @@
   (let [result (clone img)]
     (Imgproc/threshold img result threshold max Imgproc/THRESH_BINARY)
     result))
-
-;; ----------------------------------------------------------------
-;; Core 
-;; ----------------------------------------------------------------
-
-(defn rectangle 
-  ([img x1 y1 x2 y2 col]
-     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col))
-  ([img x1 y1 x2 y2 col fill?]
-     (Core/rectangle img (Point. x1 y1) (Point. x2 y2) col (if fill? Core/FILLED 1))))
 
 ;; ----------------------------------------------------------------
 
@@ -220,7 +250,7 @@
   "Boxes around keypoints with near overlap."
   [img]
   (let [gray (clone img)
-        keypoints (detect-keypoints gray)
+        keypoints (detect-keypoints-mser gray)
         kps (kp-seq keypoints)
         result (clone gray)
         pairs (same-word-pairs kps)
@@ -258,7 +288,7 @@
   "Boxes around keypoints reachable through near overlaps."
   [img]
   (let [gray (clone img)
-        keypoints (detect-keypoints gray)
+        keypoints (detect-keypoints-mser gray)
         kps (kp-seq keypoints)
         result (clone gray)
         ;; filter to a subset while we experiment
@@ -296,7 +326,34 @@
   )
   
 
+;; ----------------------------------------------------------------
+;; Object detection
+;; ----------------------------------------------------------------
 
+(defn good-matches [m]
+  (let [result (MatOfDMatch.)
+        matches (.toList m)
+        dists   (map #(.distance %) matches)
+        d-min (apply min dists)
+        d-max (apply max dists)
+        good (filter (fn [x] (<= (.distance x) (max (* 2 d-min) 1.0))) matches)]
+    (dmatch-mat good)))
+
+(defn match [img-a img-b]
+  (let [kp-a (detect-keypoints-surf img-a)
+        kp-b (detect-keypoints-surf img-b)
+        desc-a (Mat.)
+        desc-b (Mat.)
+        extractor (DescriptorExtractor/create DescriptorExtractor/SURF)
+        matcher (DescriptorMatcher/create DescriptorMatcher/FLANNBASED)
+        matches (MatOfDMatch.)]
+    (.compute extractor img-a kp-a desc-a)
+    (.compute extractor img-b kp-b desc-b)
+    (.match matcher desc-a desc-b matches)
+    (let [good (good-matches matches)
+          img-matches (Mat.)]
+      (draw-matches! img-a kp-a img-b kp-b good img-matches)
+      img-matches)))
 
 ;;
 ;; ----------------------------------------------------------------
@@ -306,7 +363,8 @@
 (defn read-image-resource
   [k]
   (let [files {:domp "dom-p-2004_375x500.tif",
-               :mf "mf-2011_375x500.jpg"}
+               :mf "mf-2011_375x500.jpg"
+               :mf-logo "mf-2011-official.tif"}
         input (str "resources/images/" (files k))]
     (Highgui/imread input org.opencv.highgui.Highgui/CV_LOAD_IMAGE_GRAYSCALE)))
 
@@ -316,6 +374,7 @@
 (comment
   
   (def mf (read-image-resource :mf))
+  (def mf-logo (read-image-resource :mf-logo))
   (def domp (read-image-resource :domp))
 
   (write-image :mf (reachable-clusters mf))
