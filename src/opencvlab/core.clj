@@ -336,16 +336,23 @@
         dists   (map #(.distance %) matches)
         d-min (apply min dists)
         d-max (apply max dists)
-        good (filter (fn [x] (<= (.distance x) (max (* 2 d-min) 1.0))) matches)]
+        good (filter (fn [x] (<= (.distance x) (max (* 2 d-min) 0.02))) matches)]
     (dmatch-mat good)))
 
+
 (defn match [img-a img-b]
-  (let [kp-a (detect-keypoints-surf img-a)
-        kp-b (detect-keypoints-surf img-b)
+  (let [algos {:surf {:extractor DescriptorExtractor/SURF :detector FeatureDetector/SURF}
+               :orb {:extractor DescriptorExtractor/ORB :detector FeatureDetector/ORB}
+               :sift {:extractor DescriptorExtractor/SIFT :detector FeatureDetector/SIFT}}
+        matchers {:flann DescriptorMatcher/FLANNBASED, :brute DescriptorMatcher/BRUTEFORCE}
+        algo (algos :orb)
+        extractor (DescriptorExtractor/create (:extractor algo))
+        matcher (DescriptorMatcher/create (matchers :brute))
+        
+        kp-a (detect-keypoints img-a (:detector algo))
+        kp-b (detect-keypoints img-b (:detector algo))
         desc-a (Mat.)
         desc-b (Mat.)
-        extractor (DescriptorExtractor/create DescriptorExtractor/SURF)
-        matcher (DescriptorMatcher/create DescriptorMatcher/FLANNBASED)
         matches (MatOfDMatch.)]
     (.compute extractor img-a kp-a desc-a)
     (.compute extractor img-b kp-b desc-b)
@@ -387,6 +394,15 @@
     (draw-keypoints! filtered keypoints result)
     (imshow result))
  
+  (dorun (for [algo [FeatureDetector/SURF 
+                     FeatureDetector/MSER 
+                     FeatureDetector/FAST
+                     FeatureDetector/ORB]]
+           (let [kps (detect-keypoints mf algo)
+                 result (clone mf)]
+             (draw-keypoints! mf kps result)
+             (imshow result (str algo))
+             )))
 
 
     ;; (Imgproc/threshold mf dst (double 120) 255 Imgproc/THRESH_BINARY)
