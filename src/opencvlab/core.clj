@@ -236,7 +236,7 @@
 
 (defn draw-hull! 
   ([img hull]
-     (draw-hull! img hull (Scalar/all -1)))
+     (draw-hull! img hull (Scalar/all -1) false))
   ([img hull col fill?]
      (rectangle img (:x1 hull) (:y1 hull) (:x2 hull) (:y2 hull) col fill?)))
 
